@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web MIDI API Test</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            margin: 20px;
+            background: #1a1a1a;
+            color: #00ff00;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #00ff00;
+            border-radius: 5px;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 3px;
+        }
+        .success { background: #003300; border: 1px solid #00ff00; }
+        .error { background: #330000; border: 1px solid #ff0000; color: #ff0000; }
+        .warning { background: #332200; border: 1px solid #ffff00; color: #ffff00; }
+        .port-list {
+            list-style: none;
+            padding: 0;
+        }
+        .port-item {
+            padding: 8px;
+            margin: 5px 0;
+            background: #002200;
+            border: 1px solid #008800;
+            border-radius: 3px;
+        }
+        .port-item.disconnected {
+            background: #220000;
+            border-color: #880000;
+            color: #ff8888;
+        }
+        .midi-log {
+            height: 400px;
+            overflow-y: auto;
+            background: #000000;
+            border: 1px solid #00ff00;
+            padding: 10px;
+            font-size: 12px;
+        }
+        .midi-message {
+            margin: 2px 0;
+            padding: 2px 5px;
+            border-left: 3px solid #00ff00;
+            background: #001100;
+        }
+        .timestamp {
+            color: #888888;
+            font-size: 10px;
+        }
+        .raw-data {
+            color: #ffff00;
+            font-family: monospace;
+        }
+        button {
+            background: #00ff00;
+            color: #000000;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            margin: 5px;
+        }
+        button:hover {
+            background: #88ff88;
+        }
+        button:disabled {
+            background: #666666;
+            cursor: not-allowed;
+        }
+        .clear-btn {
+            background: #ff0000;
+            color: #ffffff;
+        }
+        .clear-btn:hover {
+            background: #ff8888;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Web MIDI API Test Suite</h1>
+        
+        <div class="section">
+            <h2>API Support</h2>
+            <div id="api-status"></div>
+        </div>
+
+        <div class="section">
+            <h2>MIDI Access</h2>
+            <button id="request-access">Request MIDI Access</button>
+            <div id="access-status"></div>
+        </div>
+
+        <div class="section">
+            <h2>MIDI Input Ports</h2>
+            <div id="ports-info"></div>
+            <ul id="port-list" class="port-list"></ul>
+        </div>
+
+        <div class="section">
+            <h2>Real-time MIDI Messages</h2>
+            <button id="clear-log" class="clear-btn">Clear Log</button>
+            <div id="midi-log" class="midi-log"></div>
+        </div>
+
+        <div class="section">
+            <h2>Hot-plug Events</h2>
+            <div id="hotplug-log" class="midi-log"></div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let midiAccess = null;
+        let inputPorts = new Map();
+        let messageCount = 0;
+        const maxMessages = 1000; // Prevent memory issues
+
+        // Utility functions
+        function formatBytes(bytes) {
+            return bytes.map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+        }
+
+        function formatTimestamp(timestamp) {
+            const date = new Date(timestamp);
+            return date.toTimeString().split(' ')[0] + '.' + date.getMilliseconds().toString().padStart(3, '0');
+        }
+
+        function addStatus(elementId, message, type = 'success') {
+            const element = document.getElementById(elementId);
+            const statusDiv = document.createElement('div');
+            statusDiv.className = `status ${type}`;
+            statusDiv.textContent = message;
+            element.appendChild(statusDiv);
+        }
+
+        function clearStatus(elementId) {
+            document.getElementById(elementId).innerHTML = '';
+        }
+
+        function addMidiMessage(port, message) {
+            const log = document.getElementById('midi-log');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'midi-message';
+            
+            const timestamp = formatTimestamp(message.timestamp);
+            const rawData = formatBytes(Array.from(message.data));
+            
+            messageDiv.innerHTML = `
+                <span class="timestamp">${timestamp}</span> 
+                <strong>${port.name}</strong>: 
+                <span class="raw-data">${rawData}</span>
+                [${message.data.length} bytes]
+            `;
+            
+            log.insertBefore(messageDiv, log.firstChild);
+            
+            // Limit message count
+            messageCount++;
+            if (messageCount > maxMessages) {
+                log.removeChild(log.lastChild);
+                messageCount--;
+            }
+        }
+
+        function addHotplugEvent(message, type = 'success') {
+            const log = document.getElementById('hotplug-log');
+            const eventDiv = document.createElement('div');
+            eventDiv.className = `midi-message`;
+            eventDiv.style.borderLeftColor = type === 'success' ? '#00ff00' : '#ff0000';
+            
+            const timestamp = formatTimestamp(Date.now());
+            eventDiv.innerHTML = `<span class="timestamp">${timestamp}</span> ${message}`;
+            
+            log.insertBefore(eventDiv, log.firstChild);
+            
+            // Limit hotplug log
+            if (log.children.length > 50) {
+                log.removeChild(log.lastChild);
+            }
+        }
+
+        function updatePortList() {
+            const portList = document.getElementById('port-list');
+            portList.innerHTML = '';
+            
+            if (!midiAccess) {
+                return;
+            }
+
+            // Update input ports
+            for (const input of midiAccess.inputs.values()) {
+                const portItem = document.createElement('li');
+                portItem.className = 'port-item';
+                if (!input.state || input.state === 'disconnected') {
+                    portItem.className += ' disconnected';
+                }
+                
+                portItem.innerHTML = `
+                    <strong>${input.name}</strong><br>
+                    Manufacturer: ${input.manufacturer || 'Unknown'}<br>
+                    State: ${input.state || 'unknown'}<br>
+                    Connection: ${input.connection || 'unknown'}<br>
+                    ID: ${input.id}
+                `;
+                
+                portList.appendChild(portItem);
+                
+                // Store port reference for message handling
+                if (!inputPorts.has(input.id)) {
+                    inputPorts.set(input.id, input);
+                    setupInputPort(input);
+                }
+            }
+
+            // Clean up disconnected ports
+            for (const [portId, port] of inputPorts) {
+                if (!midiAccess.inputs.get(portId)) {
+                    inputPorts.delete(portId);
+                }
+            }
+
+            // Update ports info
+            const portsInfo = document.getElementById('ports-info');
+            const inputCount = midiAccess.inputs.size;
+            const outputCount = midiAccess.outputs.size;
+            portsInfo.innerHTML = `
+                <div class="status success">
+                    Found ${inputCount} input ports and ${outputCount} output ports
+                </div>
+            `;
+        }
+
+        function setupInputPort(input) {
+            input.onmidimessage = (event) => {
+                addMidiMessage(input, event);
+                console.log('MIDI Message:', {
+                    port: input.name,
+                    timestamp: event.timestamp,
+                    data: Array.from(event.data),
+                    rawData: formatBytes(Array.from(event.data))
+                });
+            };
+        }
+
+        function onMidiStateChange(event) {
+            const port = event.port;
+            const action = port.state === 'connected' ? 'connected' : 'disconnected';
+            const portType = port.type === 'input' ? 'Input' : 'Output';
+            
+            addHotplugEvent(
+                `${portType} port "${port.name}" ${action}`,
+                port.state === 'connected' ? 'success' : 'error'
+            );
+            
+            console.log('MIDI State Change:', {
+                action,
+                portType,
+                portName: port.name,
+                state: port.state,
+                connection: port.connection
+            });
+            
+            updatePortList();
+        }
+
+        // Initialize
+        function init() {
+            // Check Web MIDI API support
+            if (navigator.requestMIDIAccess) {
+                addStatus('api-status', 'Web MIDI API is supported', 'success');
+                document.getElementById('request-access').disabled = false;
+            } else {
+                addStatus('api-status', 'Web MIDI API is NOT supported', 'error');
+                document.getElementById('request-access').disabled = true;
+                
+                // Add browser-specific suggestions
+                const userAgent = navigator.userAgent;
+                if (userAgent.includes('Firefox')) {
+                    addStatus('api-status', 'Firefox: Enable dom.webmidi.enabled in about:config', 'warning');
+                } else if (userAgent.includes('Safari')) {
+                    addStatus('api-status', 'Safari: Web MIDI API is not supported', 'error');
+                }
+            }
+        }
+
+        // Request MIDI access
+        async function requestMIDIAccess() {
+            clearStatus('access-status');
+            
+            try {
+                addStatus('access-status', 'Requesting MIDI access...', 'warning');
+                
+                midiAccess = await navigator.requestMIDIAccess({
+                    sysex: false, // Set to true if you need SysEx messages
+                    software: false
+                });
+                
+                addStatus('access-status', 'MIDI access granted!', 'success');
+                
+                // Set up state change listener for hot-plug
+                midiAccess.onstatechange = onMidiStateChange;
+                
+                // Update port list
+                updatePortList();
+                
+                addHotplugEvent('MIDI system initialized - listening for devices');
+                
+            } catch (error) {
+                addStatus('access-status', `Error: ${error.message}`, 'error');
+                console.error('MIDI Access Error:', error);
+                
+                if (error.name === 'SecurityError') {
+                    addStatus('access-status', 'Permission denied - please allow MIDI access', 'error');
+                } else if (error.name === 'NotAllowedError') {
+                    addStatus('access-status', 'MIDI access denied by user', 'error');
+                }
+            }
+        }
+
+        // Event listeners
+        document.getElementById('request-access').addEventListener('click', requestMIDIAccess);
+        
+        document.getElementById('clear-log').addEventListener('click', () => {
+            document.getElementById('midi-log').innerHTML = '';
+            messageCount = 0;
+        });
+
+        // Start the test
+        init();
+    </script>
+</body>
+</html>
