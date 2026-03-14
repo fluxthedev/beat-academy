@@ -1,0 +1,36 @@
+{
+  "name": "web-midi-test",
+  "version": "1.0.0",
+  "description": "Web MIDI API browser support test suite",
+  "main": "web-midi-test.html",
+  "scripts": {
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "serve": "http-server . -p 8080 -o",
+    "lint": "eslint *.js"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0",
+    "puppeteer": "^21.5.2",
+    "http-server": "^14.1.1",
+    "eslint": "^8.54.0"
+  },
+  "jest": {
+    "testEnvironment": "jsdom",
+    "setupFilesAfterEnv": ["<rootDir>/jest.setup.js"],
+    "testMatch": [
+      "**/*.spec.js"
+    ]
+  },
+  "keywords": [
+    "midi",
+    "web-midi",
+    "browser",
+    "test",
+    "audio"
+  ],
+  "author": "NoteForge Project",
+  "license": "MIT"
+}
